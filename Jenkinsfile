@@ -3,6 +3,7 @@ pipeline {
 
     environment {
         BANTIME_SECONDS = "600"   // Fail2ban ban time in seconds
+        WAF_PORT = "8091"         // Nginx WAF port
     }
 
     stages {
@@ -37,19 +38,26 @@ pipeline {
                     sudo apt update -y
                     sudo apt install nginx -y
 
+                    # Stop Apache to avoid conflicts
+                    sudo systemctl stop apache2 || true
+                    sudo systemctl disable apache2 || true
+
+                    # Clean default Nginx site
+                    sudo rm -f /etc/nginx/sites-enabled/default
+
                     # Deploy website in /var/www/html/WAF
                     sudo mkdir -p /var/www/html/WAF
-                    sudo cp index.html /var/www/html/WAF/index.html || true
+                    sudo cp index.html /var/www/html/WAF/index.html
 
                     # Nginx rate-limit config
                     sudo bash -c 'cat > /etc/nginx/conf.d/req_limit.conf <<EOF
-limit_req_zone \\$binary_remote_addr zone=req_limit:10m rate=5r/m;
+limit_req_zone \$binary_remote_addr zone=req_limit:10m rate=5r/m;
 EOF'
 
                     # Nginx server block (WAF + website)
                     sudo bash -c 'cat > /etc/nginx/sites-available/waf.conf <<EOF
 server {
-    listen 8091;
+    listen ${WAF_PORT};
     server_name _;
 
     root /var/www/html/WAF;
@@ -64,7 +72,7 @@ server {
 
     location / {
         limit_req zone=req_limit burst=5 nodelay;
-        try_files \\$uri \\$uri/ =404;
+        try_files \$uri \$uri/ =404;
     }
 }
 EOF'
@@ -83,11 +91,10 @@ EOF'
                 sh '''
                     sudo apt install fail2ban -y
 
-                    # Jail configuration for Nginx
                     sudo bash -c 'cat > /etc/fail2ban/jail.d/nginx-limit.conf <<EOF
 [nginx-limit]
 enabled = true
-port = 8091
+port = ${WAF_PORT}
 filter = nginx-limit
 logpath = /var/log/nginx/error.log
 maxretry = 6
@@ -95,7 +102,6 @@ findtime = 60
 bantime = ${BANTIME_SECONDS}
 EOF'
 
-                    # Filter for Nginx rate limiting
                     sudo bash -c 'cat > /etc/fail2ban/filter.d/nginx-limit.conf <<EOF
 [Definition]
 failregex = limiting requests, excess: .* by zone.* client: <HOST>
@@ -114,7 +120,7 @@ EOF'
                     sudo systemctl status nginx --no-pager
                     sudo systemctl status fail2ban --no-pager
 
-                    echo "Access your WAF-protected website at: http://<server-ip>:8091/"
+                    echo "Access your WAF-protected website at: http://<server-ip>:${WAF_PORT}/"
                 '''
             }
         }
