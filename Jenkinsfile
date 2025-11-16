@@ -1,5 +1,5 @@
 pipeline {
-   agent any
+    agent any
 
     environment {
         BANTIME_SECONDS = "600"   // Change here if needed
@@ -31,94 +31,61 @@ pipeline {
             }
         }
 
-      stage('Install Apache2 & Deploy Website') {
-    steps {
-        sh '''
-        sudo apt update -y
-        sudo apt install apache2 -y
+        stage('Install & Configure Nginx + Website') {
+            steps {
+                sh """
+                    sudo apt update -y
+                    sudo apt install nginx -y
 
-        # Disable default site to avoid port conflict
-        sudo a2dissite 000-default.conf || true
-        sudo a2dissite default-ssl.conf || true
+                    # Deploy website
+                    sudo mkdir -p /var/www/html
+                    sudo cp index.html /var/www/html/index.html || true
 
-        # Remove any existing Listen 80 lines
-        sudo sed -i '/Listen 80/d' /etc/apache2/ports.conf
-
-        # Add new port
-        echo "Listen 8090" | sudo tee -a /etc/apache2/ports.conf
-
-        # Create new VirtualHost file
-        sudo bash -c 'cat > /etc/apache2/sites-available/waf-site.conf <<EOF
-<VirtualHost *:8090>
-    ServerAdmin webmaster@localhost
-    DocumentRoot /var/www/html
-    ErrorLog \${APACHE_LOG_DIR}/error.log
-    CustomLog \${APACHE_LOG_DIR}/access.log combined
-</VirtualHost>
+                    # Nginx rate-limit config
+                    sudo bash -c 'cat > /etc/nginx/conf.d/req_limit.conf <<EOF
+limit_req_zone \$binary_remote_addr zone=req_limit:10m rate=5r/m;
 EOF'
 
-        # Enable new site
-        sudo a2ensite waf-site.conf
-
-        # Deploy website file
-        sudo cp index.html /var/www/html/index.html
-
-        sudo systemctl restart apache2
-        sudo systemctl status apache2 --no-pager
-        '''
-    }
-}
-stage('Install & Configure Nginx WAF') {
-    steps {
-        sh '''
-        sudo apt install nginx -y
-
-        # Create limit_req_zone (escaped variable)
-        sudo bash -c 'cat > /etc/nginx/conf.d/req_limit.conf <<EOF
-limit_req_zone \\$binary_remote_addr zone=req_limit:10m rate=5r/m;
-EOF'
-
-        # Create server block
-        sudo bash -c 'cat > /etc/nginx/sites-available/waf.conf <<EOF
+                    # Nginx server block (WAF + website)
+                    sudo bash -c "cat > /etc/nginx/sites-available/waf.conf <<EOF
 server {
     listen 8091;
     server_name _;
+
+    root /var/www/html;
+
+    index index.html;
 
     error_page 429 /429.json;
 
     location /429.json {
         default_type application/json;
-        return 429 "{\\"message\\": \\"Your request has been blocked. Please wait ${BLOCK_MESSAGE} before trying again.\\"}";
+        return 429 '{\"message\": \"Your request has been blocked. Please wait ${BLOCK_MESSAGE} before trying again.\"}';
     }
 
     location / {
         limit_req zone=req_limit burst=5 nodelay;
-
-        proxy_pass http://127.0.0.1:8090;
-        proxy_set_header Host \\$host;
-        proxy_set_header X-Real-IP \\$remote_addr;
+        try_files \$uri \$uri/ =404;
     }
 }
-EOF'
+EOF"
 
-        sudo ln -sf /etc/nginx/sites-available/waf.conf /etc/nginx/sites-enabled/waf.conf
+                    sudo ln -sf /etc/nginx/sites-available/waf.conf /etc/nginx/sites-enabled/waf.conf
 
-        sudo nginx -t
-        sudo systemctl restart nginx
-        '''
-    }
-}
-
-
-        
+                    sudo nginx -t
+                    sudo systemctl restart nginx
+                    sudo systemctl enable nginx
+                """
+            }
+        }
 
         stage('Install & Configure Fail2ban') {
             steps {
-                sh '''
-                sudo apt install fail2ban -y
+                sh """
+                    sudo apt install fail2ban -y
 
-                # Jail config
-                sudo bash -c 'cat > /etc/fail2ban/jail.d/nginx-limit.conf <<EOF
+                    # Jail config
+                    sudo bash -c "cat > /etc/fail2ban/jail.d/nginx-limit.conf <<EOF
 [nginx-limit]
 enabled = true
 port = 8091
@@ -127,29 +94,28 @@ logpath = /var/log/nginx/error.log
 maxretry = 6
 findtime = 60
 bantime = ${BANTIME_SECONDS}
-EOF'
+EOF"
 
-                # Filter config
-                sudo bash -c 'cat > /etc/fail2ban/filter.d/nginx-limit.conf <<EOF
+                    # Filter config
+                    sudo bash -c 'cat > /etc/fail2ban/filter.d/nginx-limit.conf <<EOF
 [Definition]
 failregex = limiting requests, excess: .* by zone.* client: <HOST>
 EOF'
 
-                sudo systemctl restart fail2ban
-                '''
+                    sudo systemctl restart fail2ban
+                """
             }
         }
 
         stage('Verification') {
             steps {
-                sh '''
-                echo "===== SERVICE STATUS ====="
-                sudo systemctl status apache2 --no-pager
-                sudo systemctl status nginx --no-pager
-                sudo systemctl status fail2ban --no-pager
+                sh """
+                    echo "===== SERVICE STATUS ====="
+                    sudo systemctl status nginx --no-pager
+                    sudo systemctl status fail2ban --no-pager
 
-                echo "Access your WAF at: http://<server-ip>:8091/"
-                '''
+                    echo "Access your website + WAF at: http://<server-ip>:8091/"
+                """
             }
         }
     }
