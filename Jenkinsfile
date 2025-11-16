@@ -33,29 +33,25 @@ pipeline {
         }
 
         stage('Install & Configure Nginx + Website') {
-            steps {
-                sh '''
-                    sudo apt update -y
-                    sudo apt install nginx -y
+    steps {
+        sh '''
+            sudo apt update -y
+            sudo apt install nginx -y
 
-                    # Stop Apache to avoid conflicts
-                    sudo systemctl stop apache2 || true
-                    sudo systemctl disable apache2 || true
+            sudo systemctl stop apache2 || true
+            sudo systemctl disable apache2 || true
 
-                    # Clean default Nginx site
-                    sudo rm -f /etc/nginx/sites-enabled/default
+            sudo rm -f /etc/nginx/sites-enabled/default
 
-                    # Deploy website in /var/www/html/WAF
-                    sudo mkdir -p /var/www/html/WAF
-                    sudo cp index.html /var/www/html/WAF/index.html
+            sudo mkdir -p /var/www/html/WAF
+            sudo cp index.html /var/www/html/WAF/index.html
 
-                    # Nginx rate-limit config
-                    sudo bash -c 'cat > /etc/nginx/conf.d/req_limit.conf <<EOF
-limit_req_zone \$binary_remote_addr zone=req_limit:10m rate=5r/m;
+            # Corrected limit_req_zone with escaped $
+            sudo bash -c 'cat > /etc/nginx/conf.d/req_limit.conf <<EOF
+limit_req_zone \\$binary_remote_addr zone=req_limit:10m rate=5r/m;
 EOF'
 
-                    # Nginx server block (WAF + website)
-                    sudo bash -c 'cat > /etc/nginx/sites-available/waf.conf <<EOF
+            sudo bash -c 'cat > /etc/nginx/sites-available/waf.conf <<EOF
 server {
     listen ${WAF_PORT};
     server_name _;
@@ -77,14 +73,15 @@ server {
 }
 EOF'
 
-                    sudo ln -sf /etc/nginx/sites-available/waf.conf /etc/nginx/sites-enabled/waf.conf
+            sudo ln -sf /etc/nginx/sites-available/waf.conf /etc/nginx/sites-enabled/waf.conf
 
-                    sudo nginx -t
-                    sudo systemctl restart nginx
-                    sudo systemctl enable nginx
-                '''
-            }
-        }
+            sudo nginx -t
+            sudo systemctl restart nginx
+            sudo systemctl enable nginx
+        '''
+    }
+}
+
 
         stage('Install & Configure Fail2ban') {
             steps {
