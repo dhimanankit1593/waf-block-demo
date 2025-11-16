@@ -68,15 +68,14 @@ EOF'
         '''
     }
 }
-
 stage('Install & Configure Nginx WAF') {
     steps {
         sh '''
         sudo apt install nginx -y
 
-        # Create limit_req_zone config in http block
+        # Create limit_req_zone (escaped variable)
         sudo bash -c 'cat > /etc/nginx/conf.d/req_limit.conf <<EOF
-limit_req_zone $binary_remote_addr zone=req_limit:10m rate=5r/m;
+limit_req_zone \\$binary_remote_addr zone=req_limit:10m rate=5r/m;
 EOF'
 
         # Create server block
@@ -85,37 +84,31 @@ server {
     listen 8091;
     server_name _;
 
-    # Custom block message
     error_page 429 /429.json;
 
     location /429.json {
         default_type application/json;
-        return 429 "{\"message\": \"Your request has been blocked. Please wait ${BLOCK_MESSAGE} before trying again.\"}";
+        return 429 "{\\"message\\": \\"Your request has been blocked. Please wait ${BLOCK_MESSAGE} before trying again.\\"}";
     }
 
     location / {
         limit_req zone=req_limit burst=5 nodelay;
 
         proxy_pass http://127.0.0.1:8090;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-
-        access_log /var/log/nginx/access.log;
-        error_log /var/log/nginx/error.log;
+        proxy_set_header Host \\$host;
+        proxy_set_header X-Real-IP \\$remote_addr;
     }
 }
 EOF'
 
-        # Enable waf site
         sudo ln -sf /etc/nginx/sites-available/waf.conf /etc/nginx/sites-enabled/waf.conf
 
-        # Test and restart nginx
         sudo nginx -t
         sudo systemctl restart nginx
-        sudo systemctl status nginx --no-pager
         '''
     }
 }
+
 
         
 
