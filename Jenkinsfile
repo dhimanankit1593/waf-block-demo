@@ -1,5 +1,5 @@
 pipeline {
-    agent any
+   agent any
 
     environment {
         BANTIME_SECONDS = "600"   // Change here if needed
