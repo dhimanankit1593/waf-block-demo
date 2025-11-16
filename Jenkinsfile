@@ -31,23 +31,44 @@ pipeline {
             }
         }
 
-        stage('Install Apache2 & Deploy Website') {
-            steps {
-                sh '''
-                sudo apt update -y
-                sudo apt install apache2 -y
+      stage('Install Apache2 & Deploy Website') {
+    steps {
+        sh '''
+        sudo apt update -y
+        sudo apt install apache2 -y
 
-                # Change Apache port to 8090
-                sudo sed -i 's/Listen 80/Listen 8090/' /etc/apache2/ports.conf
-                sudo sed -i 's/<VirtualHost \\*:80>/<VirtualHost *:8090>/' /etc/apache2/sites-available/000-default.conf
+        # Disable default site to avoid port conflict
+        sudo a2dissite 000-default.conf || true
+        sudo a2dissite default-ssl.conf || true
 
-                # Deploy website
-                sudo cp index.html /var/www/html/
+        # Remove any existing Listen 80 lines
+        sudo sed -i '/Listen 80/d' /etc/apache2/ports.conf
 
-                sudo systemctl restart apache2
-                '''
-            }
-        }
+        # Add new port
+        echo "Listen 8090" | sudo tee -a /etc/apache2/ports.conf
+
+        # Create new VirtualHost file
+        sudo bash -c 'cat > /etc/apache2/sites-available/waf-site.conf <<EOF
+<VirtualHost *:8090>
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/html
+    ErrorLog \${APACHE_LOG_DIR}/error.log
+    CustomLog \${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
+EOF'
+
+        # Enable new site
+        sudo a2ensite waf-site.conf
+
+        # Deploy website file
+        sudo cp index.html /var/www/html/index.html
+
+        sudo systemctl restart apache2
+        sudo systemctl status apache2 --no-pager
+        '''
+    }
+}
+
 
         stage('Install & Configure Nginx WAF') {
             steps {
